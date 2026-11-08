@@ -1,0 +1,44 @@
+name: Compilar ESP32
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {role: bovinos, lora: 0, debug: 0, radiolib: '8.0.0'}
+          - {role: bovinos, lora: 1, debug: 0, radiolib: '8.0.0'}
+          - {role: bovinos, lora: 1, debug: 1, radiolib: '8.0.0'}
+          - {role: base-lora, lora: 1, debug: 0, radiolib: '8.0.0'}
+          - {role: chihuahua, lora: 0, debug: 0, radiolib: '8.0.0'}
+          - {role: chihuahua, lora: 1, debug: 0, radiolib: '8.0.0'}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-arduino-cli@v2
+      - name: Instalar placa e bibliotecas
+        run: |
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@3.3.12
+          arduino-cli lib install U8g2@2.37.1
+          arduino-cli lib install RadioLib@${{ matrix.radiolib }}
+      - name: Verificar estrutura e credenciais
+        run: python3 scripts/verificar-repo.py
+      - name: Criar credenciais ficticias para compilacao
+        run: bash scripts/preparar-configs-ci.sh
+      - name: Compilar
+        run: bash scripts/compilar.sh '${{ matrix.role }}' '${{ matrix.lora }}' '${{ matrix.debug }}'
+      - name: Salvar logs (mesmo se compilacao falhar)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.role }}-lora${{ matrix.lora }}-debug${{ matrix.debug }}
+          path: .build/**/build.log
+          if-no-files-found: ignore

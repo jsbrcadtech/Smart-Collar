@@ -1,0 +1,33 @@
+# Segredos / configuracoes locais (nao publicar)
+**/*_config_local.h
+**/config_local.h
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Arduino/ESP32 outputs
+.build/
+build/
+.output/
+*.bin
+*.elf
+*.map
+*.hex
+*.uf2
+*.o
+*.a
+*.d
+*.cache
+
+# Dados de testes e logs locais; nao publicar dados de animais nem senhas
+logs/
+COMPILACAO/logs/
+*.csv
+*.raw
+raw.bin
+*.tmp
+__pycache__/
+.DS_Store
+Thumbs.db

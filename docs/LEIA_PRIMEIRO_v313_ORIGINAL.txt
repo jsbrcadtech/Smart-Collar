@@ -1,0 +1,126 @@
+SMART COLLAR v3.1.3 + BASE LoRa v1.4 + CHIHUAHUA LAB v1.5
+=========================================================
+Hardware: Heltec WiFi LoRa 32 V3.2 (ESP32-S3, SX1262, OLED) + GY-521 (MPU6050).
+Ligacoes: MPU VCC->3V3, GND->GND, SDA->GPIO4, SCL->GPIO5.
+Colar v3.1.3 e base v1.4 vao JUNTOS (protocolo LoRa v5).
+
+!!! CORRECAO DE SEGURANCA (pacote v3.1.2) !!!
+  O teste 11a da v3.1.2 mandava DESCONECTAR A ANTENA DA BASE. NAO FACA ISSO: a base transmite ACKs
+  e o SX1262 transmitindo sem antena pode ser danificado. Antenas SEMPRE conectadas nas duas placas.
+  Para simular perda de sinal: afaste o colar, coloque-o dentro de uma lata/caixa metalica fechada,
+  ou desligue a BASE (teste 11b). Nunca remova antena de radio ligado.
+
+PASTAS
+  SmartCollar_Research_v313/  .ino + SmartCollar_tipos.h + SmartCollar_lora.h
+  SmartCollar_Base_v14/       .ino + SmartCollar_lora.h (IDENTICO ao do colar - sha256 em COMPILACAO)
+  ChihuahuaLab_v15/           sem mudancas
+  COMPILACAO/                 compilar.sh (script exato), logs/ (verbose), SHA256SUMS.txt
+
+COMPILACAO REPRODUZIVEL
+  COMPILACAO/compilar.sh copia o sketch para uma pasta temporaria e liga as opcoes por sed NA COPIA
+  (os fontes entregues ficam com LORA=0 e DEBUG=0). Cada log contem: versoes do core e bibliotecas,
+  as linhas #define efetivas do fonte compilado, sha256 de cada fonte compilado, o comando, a saida
+  --verbose --warnings all completa, o codigo de saida e o sha256 dos .bin gerados.
+  Isso responde a duvida da revisao sobre o Chihuahua: o log "LORA1" mostra
+  "#define HABILITAR_LORA_TX 1" na copia compilada, embora o .ino entregue tenha 0.
+  SHA256SUMS.txt = hash dos fontes ENTREGUES. Para reproduzir: arduino-cli + core esp32 3.3.12 +
+  U8g2 2.37.1 + RadioLib 8.0.0 (ou 7.8.1) e rodar o script.
+
+-------------------------------------------------------------------
+v3.1.3 / BASE v1.4 - CORRECOES DA QUARTA REVISAO
+-------------------------------------------------------------------
+A  Fila parava apos 24,85 dias (PRIORIDADE ALTA)
+   Causa: (int32_t)(millis() - 0) fica negativo apos 2^31 ms, mesmo com DEBUG desligado.
+   -> Sem HABILITAR_DEBUG o processamento e incondicional. Com DEBUG, o atraso usa flag explicita
+      + duracao por subtracao sem sinal.
+   -> O firmware nao usa mais millis(): um relogio unico ms64() (64 bits) e ms32() (32 bits baixos,
+      carimbo das amostras). Instantes de 32 bits so sao comparados por diferenca entre instantes
+      proximos. Revisadas tambem as comparacoes do LED e do OLED (tinham o mesmo tipo de erro).
+   -> TESTE_OFFSET_MS adianta o relogio: compile com 2147423648ULL (24,85 dias - 60 s) ou
+      4294907296ULL (49,7 dias - 60 s) e a virada acontece 1 minuto apos ligar (testes 15 e 16).
+
+B  Base confirmava pacote nao salvo (PRIORIDADE ALTA)
+   -> base.csv e a UNICA fonte de verdade. Cada linha traz os acumulados do colar e um crc proprio.
+      Nao existe mais arquivo de referencia: nao ha duas gravacoes a coordenar.
+   -> Ordem: grava linha -> confere bytes -> avanca referencia (RAM) -> ACK. Gravacao falhou = SEM
+      ACK: o colar retransmite; nada avancou, entao o proximo pacote recebido cobre o intervalo.
+      ACK agora significa "gravado na flash".
+   -> No boot a referencia de cada colar e reconstruida lendo base_antigo.csv + base.csv; linhas
+      sem crc valido sao ignoradas; ultima linha incompleta recebe '\n' antes de novas linhas.
+   -> Retransmissao de um seq ja gravado: reconhecida pela referencia, confirmada de novo, sem linha.
+
+C  Checkpoint: duplicacao / perda de horas pendentes (PRIORIDADE ALTA)
+   -> Cada segmento horario tem seg_id unico (coluna nova no horas.csv). No boot os IDs ja gravados
+      sao lidos; um checkpoint cujo seg_id ja esta no CSV ou na fila pendente e IGNORADO
+      (evento HORA CHECKPOINT_JA_GRAVADO_IGNORADO_...). Gravar a mesma hora 2x e impossivel.
+   -> horas.csv NUNCA passa pela fila de download: escrita direta e conferida. Se o proprio
+      horas.csv estiver sendo baixado, a hora vai para a fila duravel.
+   -> Fila duravel de horas nao gravadas na NVS (particao separada: funciona com LittleFS cheio),
+      ate 24 horas, regravadas em ordem a cada 60 s e removidas so apos confirmacao. Acima de 24
+      horas a mais antiga e descartada com evento e contador "horas perdidas" no painel.
+   -> Ordem na virada: hora fechada fica duravel (CSV ou NVS) -> SO DEPOIS checkpoint novo e RTC.
+
+D  Sincronizar relogio com fila atrasada desordenava o bruto (PRIORIDADE MEDIA-ALTA)
+   -> O marcador guarda o instante do ajuste e e escrito no bruto antes da primeira AMOSTRA com
+      carimbo >= esse instante (ordem cronologica), nao no momento do clique.
+   -> Exportacao: o 1o marcador vale tambem para amostras anteriores a ele (epoch preenchido desde
+      o inicio); coluna nova fora_de_ordem = 1 se algum carimbo nao for crescente, e evento RAW.
+
+Arquivos antigos com cabecalho diferente sao renomeados (horas_v312.csv, base_v13.csv), nunca
+apagados. O historico de horas da v3.1.2 continua sendo carregado (sem seg_id).
+
+-------------------------------------------------------------------
+TESTES DE BANCADA
+-------------------------------------------------------------------
+ LoRa: mude #define HABILITAR_LORA 0 -> 1 no colar; grave colar v3.1.3 e base v1.4; ANTENAS.
+ Modo teste: #define HABILITAR_DEBUG 1 (e TESTE_HORA_CURTA 1 quando indicado). VOLTE PARA 0 EM CAMPO.
+ Endpoints de teste (so com DEBUG), pelo console do navegador com o painel aberto:
+   fetch('/api/debug/atraso',{method:'POST',body:new URLSearchParams({s:50})})
+   fetch('/api/debug/flash_cheia',{method:'POST',body:new URLSearchParams({on:1})})   // on:0 desliga
+
+ 1-8  Roteiro basico (abaixo) continua valido.
+ 9    Dois desligamentos seguidos (<1 min entre eles): horas.csv sem seg_id repetido; segundos
+      validos somados ~ tempo ligado (perda <= 60 s por corte de energia).
+ 10   Rotulo sob atraso (DEBUG): bruto 3 min, atraso 20 s, trocar rotulo 2-3x anotando a hora.
+ 11a  Perda de sinal SEM reiniciar a base: colar dentro de caixa metalica ou longe por 3 min
+      (ANTENAS CONECTADAS). base.csv: INTERVALO, pacotes_perdidos_antes ~ 3, intervalo_s ~ 240.
+ 11b  Base SEM ENERGIA 3 min: INTERVALO_APOS_REINICIO_BASE, intervalo_s ~ 240 (nao horas).
+ 11c  Colar reiniciado: REINICIO_COLAR. Base sem base.csv anterior: BASELINE (intervalo vazio).
+ 12   MPU desconectado durante bruto (tirar SDA ~10 s): I2C ERRO -> MPU RECONECTADO; bruto segue.
+ Testes da quarta revisao:
+ 15   Uptime 24,85 dias: compile com TESTE_OFFSET_MS 2147423648ULL. Deixe 5 min. Painel: fila
+      maxima estavel, seq subindo, resumo.csv ganhando linhas apos o 1o minuto.
+ 16   Virada de 49,7 dias: TESTE_OFFSET_MS 4294907296ULL + bruto de 3 min iniciado logo no boot.
+      /csv/raw: ms continuo (+50 por linha), fora_de_ordem = 0 em todas as linhas.
+ 17   Corte de energia logo apos a base gravar: desligue a base 0-1 s apos o OLED mostrar um pacote;
+      religue. Nenhum intervalo some: soma de intervalo_s das linhas = uptime do colar.
+ 18   Corte na virada de hora (DEBUG + TESTE_HORA_CURTA: hora = 2 min): corte a energia do colar
+      nos segundos perto de cada virada, varias vezes. horas.csv: nenhum seg_id duplicado; eventos
+      PARCIAL_RECUPERADA / CHECKPOINT_JA_GRAVADO_IGNORADO coerentes.
+ 19   Download longo na virada (DEBUG + hora curta): baixe /csv/raw grande ou /csv/hours atravessando
+      a virada. A hora vai para o CSV ou para a fila NVS; depois, PENDENTE_GRAVADA_CONFIRMADA.
+ 20   Sincronizacao com fila 50 s atrasada (DEBUG): bruto 3 min; atraso 50 s; recarregue o painel
+      (envia /api/time) durante o atraso. /csv/raw: fora_de_ordem = 0; epoch_ms continuo.
+ 21   Flash cheia > 1 hora (DEBUG + hora curta + /api/debug/flash_cheia on:1 por ~10 min = 5 horas
+      de teste): painel mostra HORAS PENDENTES (NVS); reinicie a placa no meio (continuam
+      pendentes); desligue flash_cheia: todas gravadas, cada seg_id uma unica vez.
+
+ROTEIRO BASICO (1-8)
+  1 Serial 115200: "MPU DETECTADO_FIFO", calibracao OK com a placa parada.
+  2 Painel 192.168.4.1: relogio "origem: navegador"; fila max bem abaixo de 1200; lacunas 0.
+  3 Baixar CSV grande: lacunas/descartes continuam 0.
+  4 Bruto 3 min -> /csv/raw: ~3600 linhas, ms +50 por linha, epoch_ms preenchido.
+  5 Botao PRG: LED pisca 3x, evento SINCRONIZACAO.
+  6 Andar 20 passos: ~17-20; sacudir 5x: picos descartados sobem.
+  7 Desligar no meio da hora e religar: HORA PARCIAL_RECUPERADA_... ou RETOMADA_... .
+  8 LoRa: base mostra ACK; desligar a base: colar mostra falhas e retenta.
+
+LIMITES CONHECIDOS (honestos)
+  - Validado por compilacao real e testes de logica no computador; NAO testado na placa fisica.
+  - Ruminacao, pastejo, passos e cio continuam HIPOTESES ate validacao com video rotulado.
+  - Fila duravel guarda 24 horas; corte de energia perde ate 60 s da hora corrente.
+  - Canal LoRa unico de 125 kHz: adequado para pesquisa/bancada; uso permanente -> LoRaWAN.
+
+SEGURANCA
+  Prototipo de pesquisa, nao diagnostico veterinario. Bateria 1S com protecao, caixa fechada,
+  fixacao segura. Nunca ligue/transmita radio sem antena. Troque as senhas do Wi-Fi.
